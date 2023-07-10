@@ -2,14 +2,17 @@ import requests
 from concurrent.futures import ThreadPoolExecutor
 import os
 import urllib.parse
+import hashlib
 
 
 class DownloadItem:
-    def __init__(self, target_url, number_of_threads, chunk_size):
+    def __init__(self, target_url, number_of_threads, chunk_size, md5_hash=None, auth=None):
         self.part_byte_ranges = []
         self.target_url = target_url
         self.number_of_threads = number_of_threads
         self.chunk_size = chunk_size
+        self.resource_md5 = md5_hash
+        self.auth = auth
         self.__fetch_resource_location_url()
         self.__fetch_resource_size()
         self.__calc_part_size()
@@ -24,6 +27,7 @@ part byte ranges: {self.part_byte_ranges}
 """
 
     def __fetch_resource_location_url(self):
+        # will 302 to the actual resource
         response = requests.head(
             self.target_url
         )
@@ -38,9 +42,16 @@ part byte ranges: {self.part_byte_ranges}
         self.resource_file_name = decoded_file_name
 
     def __fetch_resource_size(self):
-        response = requests.head(
-            self.resource_location_url
-        )
+        if self.auth:
+            headers = {'Authorization': f'LOW {self.auth["s3"]["access"]}:{self.auth["s3"]["secret"]}'}
+            response = requests.head(
+                self.resource_location_url,
+                headers=headers
+            )
+        else:
+            response = requests.head(
+                self.resource_location_url
+            )
         if 'Content-Length' not in response.headers.keys():
             raise ValueError("Response doesn't contain 'Content-Length' header, cannot download")
         else:
@@ -62,14 +73,16 @@ part byte ranges: {self.part_byte_ranges}
 
     def __download_part(self, start_byte, end_byte):
         print(f"downloading part from byte {start_byte} - byte {end_byte}")
+        headers={
+            'Range': f"bytes={start_byte}-{end_byte}"
+        }
+        if self.auth:
+            headers['Authorization'] = f"LOW {self.auth['s3']['access']}:{self.auth['s3']['secret']}"
         response = requests.get(
-            url=self.target_url,
-            headers={
-                'Range': f"bytes={start_byte}-{end_byte}"
-            },
-            stream=True
+            url=self.resource_location_url,
+            headers=headers,
+            stream=True,
         )
-
         with open(f"dl-{start_byte}-{end_byte}.part", "wb") as out_file:
             for chunk in response.iter_content(chunk_size=self.chunk_size):
                 if chunk:
@@ -79,6 +92,7 @@ part byte ranges: {self.part_byte_ranges}
     def download_resource(self):
         with ThreadPoolExecutor(max_workers=self.number_of_threads) as executor:
             futures = executor.map(self.__download_part, *zip(*self.part_byte_ranges))
+            # TODO error handling for the threads e.g re-download failed parts
 
     def rebuild_resource(self):
         with open(self.resource_file_name, 'wb') as f:
@@ -87,3 +101,14 @@ part byte ranges: {self.part_byte_ranges}
                 with open(part_file_path, 'rb') as rf:
                     f.write(rf.read())
                 os.remove(part_file_path)
+
+    def validate_resource_md5(self):
+        if self.resource_md5:
+            with open(self.resource_file_name, 'rb') as f:
+                md5_hash = hashlib.md5(f.read()).hexdigest()
+                if md5_hash == self.resource_md5:
+                    return True
+                else:
+                    return False
+        else:
+            raise ValueError("No initial MD5 Hash provided.")
