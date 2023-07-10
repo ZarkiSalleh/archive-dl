@@ -161,3 +161,4 @@ cython_debug/
 *.7z
 *.part
 test.py
+config.py
