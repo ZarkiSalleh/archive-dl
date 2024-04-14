@@ -6,13 +6,16 @@ import hashlib
 
 
 class DownloadItem:
-    def __init__(self, target_url, number_of_threads, chunk_size, md5_hash=None, auth=None):
+    def __init__(
+        self, target_url, number_of_threads, chunk_size, md5_hash=None, s3_access_key=None, s3_secret_key=None
+    ):
         self.part_byte_ranges = []
         self.target_url = target_url
         self.number_of_threads = number_of_threads
         self.chunk_size = chunk_size
         self.resource_md5 = md5_hash
-        self.auth = auth
+        self.s3_access_key = s3_access_key
+        self.s3_secret_key = s3_secret_key
         self.__fetch_resource_location_url()
         self.__fetch_resource_size()
         self.__calc_part_size()
@@ -28,13 +31,11 @@ part byte ranges: {self.part_byte_ranges}
 
     def __fetch_resource_location_url(self):
         # will 302 to the actual resource
-        response = requests.head(
-            self.target_url
-        )
-        if 'Location' not in response.headers.keys():
+        response = requests.head(self.target_url)
+        if "Location" not in response.headers.keys():
             raise ValueError("Archive 'Location' header not found, cannot download")
         else:
-            self.resource_location_url = response.headers['Location']
+            self.resource_location_url = response.headers["Location"]
 
     def __calc_resource_file_name(self):
         encoded_file_name = self.resource_location_url.split("/")[-1]
@@ -42,20 +43,16 @@ part byte ranges: {self.part_byte_ranges}
         self.resource_file_name = decoded_file_name
 
     def __fetch_resource_size(self):
-        if self.auth:
-            headers = {'Authorization': f'LOW {self.auth["s3"]["access"]}:{self.auth["s3"]["secret"]}'}
-            response = requests.head(
-                self.resource_location_url,
-                headers=headers
-            )
+        # TODO can get from metadata
+        if self.s3_access_key and self.s3_secret_key:
+            headers = {"Authorization": f"LOW {self.s3_access_key}:{self.s3_secret_key}"}
+            response = requests.head(self.resource_location_url, headers=headers)
         else:
-            response = requests.head(
-                self.resource_location_url
-            )
-        if 'Content-Length' not in response.headers.keys():
+            response = requests.head(self.resource_location_url)
+        if "Content-Length" not in response.headers.keys():
             raise ValueError("Response doesn't contain 'Content-Length' header, cannot download")
         else:
-            self.resource_size = int(response.headers['Content-Length'])
+            self.resource_size = int(response.headers["Content-Length"])
 
     def __calc_part_size(self):
         self.part_size = int(self.resource_size / self.number_of_threads)
@@ -73,11 +70,9 @@ part byte ranges: {self.part_byte_ranges}
 
     def __download_part(self, start_byte, end_byte):
         print(f"downloading part from byte {start_byte} - byte {end_byte}")
-        headers={
-            'Range': f"bytes={start_byte}-{end_byte}"
-        }
-        if self.auth:
-            headers['Authorization'] = f"LOW {self.auth['s3']['access']}:{self.auth['s3']['secret']}"
+        headers = {"Range": f"bytes={start_byte}-{end_byte}"}
+        if self.s3_access_key and self.s3_secret_key:
+            headers["Authorization"] = f"LOW {self.s3_access_key}:{self.s3_secret_key}"
         response = requests.get(
             url=self.resource_location_url,
             headers=headers,
@@ -95,16 +90,16 @@ part byte ranges: {self.part_byte_ranges}
             # TODO error handling for the threads e.g re-download failed parts
 
     def rebuild_resource(self):
-        with open(self.resource_file_name, 'wb') as f:
+        with open(self.resource_file_name, "wb") as f:
             for start_byte, end_byte in sorted(self.part_byte_ranges):
                 part_file_path = f"dl-{start_byte}-{end_byte}.part"
-                with open(part_file_path, 'rb') as rf:
+                with open(part_file_path, "rb") as rf:
                     f.write(rf.read())
                 os.remove(part_file_path)
 
     def validate_resource_md5(self):
         if self.resource_md5:
-            with open(self.resource_file_name, 'rb') as f:
+            with open(self.resource_file_name, "rb") as f:
                 md5_hash = hashlib.md5(f.read()).hexdigest()
                 if md5_hash == self.resource_md5:
                     return True
