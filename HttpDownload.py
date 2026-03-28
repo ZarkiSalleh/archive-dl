@@ -12,7 +12,9 @@ class HttpDownload:
         target_url,
         number_of_threads,
         chunk_size,
+        download_path=None,
         md5_hash=None,
+        extra_headers=None,
     ):
         self.part_byte_ranges = []
         self.target_url = target_url
@@ -31,11 +33,16 @@ class HttpDownload:
     def __fetch_resource_location_url(self):
         # will 302 to the actual resource
         response = requests.head(self.target_url)
-        if "Location" not in response.headers.keys():
-            # raise ValueError("Archive 'Location' header not found, cannot download")
-            self.resource_location_url = self.target_url
-        else:
-            self.resource_location_url = response.headers["Location"]
+        try:
+            response.raise_for_status()
+            if "Location" not in response.headers.keys():
+                # raise ValueError("Archive 'Location' header not found, cannot download")
+                print("resource is redirecting, using redirect url for resource")
+                self.resource_location_url = self.target_url
+            else:
+                self.resource_location_url = response.headers["Location"]
+        except Exception as e:
+            print(e)
 
     def __calc_resource_file_name(self):
         encoded_file_name = self.resource_location_url.split("/")[-1]
@@ -44,10 +51,15 @@ class HttpDownload:
 
     def __fetch_resource_size(self):
         response = requests.head(self.resource_location_url)
-        if "Content-Length" not in response.headers.keys():
-            raise ValueError("Response doesn't contain 'Content-Length' header, cannot download")
-        else:
-            self.resource_size = int(response.headers["Content-Length"])
+        try:
+            response.raise_for_status()
+            if "Content-Length" not in response.headers.keys():
+                raise ValueError("Response doesn't contain 'Content-Length' header, cannot download")
+                # TODO - run in single thread mode
+            else:
+                self.resource_size = int(response.headers["Content-Length"])
+        except Exception as e:
+            print(e)
 
     def __calc_part_size(self):
         self.part_size = int(self.resource_size / self.number_of_threads)
@@ -78,12 +90,16 @@ class HttpDownload:
             headers=headers,
             stream=True,
         )
-        with open(self.resource_file_name, "r+b") as out_file:
-            out_file.seek(start_byte)
-            for chunk in response.iter_content(chunk_size=self.chunk_size):
-                if chunk:
-                    out_file.write(chunk)
-        return response.status_code
+        try:
+            response.raise_for_status()
+            with open(self.resource_file_name, "r+b") as out_file:
+                out_file.seek(start_byte)
+                for chunk in response.iter_content(chunk_size=self.chunk_size):
+                    if chunk:
+                        out_file.write(chunk)
+            return response.status_code
+        except Exception as e:
+            print(e)
 
     def download_resource(self):
         with ThreadPoolExecutor(max_workers=self.number_of_threads) as executor:
@@ -91,9 +107,9 @@ class HttpDownload:
             # TODO error handling for the threads e.g re-download failed parts
 
     def validate_resource_md5(self):
+        md5_hash = hashlib.md5(f.read()).hexdigest()
         if self.resource_md5:
             with open(self.resource_file_name, "rb") as f:
-                md5_hash = hashlib.md5(f.read()).hexdigest()
                 if md5_hash == self.resource_md5:
                     print("md5 match, good download")
                     return True
@@ -103,4 +119,5 @@ class HttpDownload:
                     return False
         else:
             print("no md5 provided, skipping verification")
+            print(md5_hash)
             # raise ValueError("No initial MD5 Hash provided.")
