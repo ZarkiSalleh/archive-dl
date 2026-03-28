@@ -1,5 +1,5 @@
 import requests
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 import urllib.parse
 import hashlib
@@ -90,21 +90,37 @@ class HttpDownload:
             headers=headers,
             stream=True,
         )
-        try:
-            response.raise_for_status()
-            with open(self.resource_file_name, "r+b") as out_file:
-                out_file.seek(start_byte)
-                for chunk in response.iter_content(chunk_size=self.chunk_size):
-                    if chunk:
-                        out_file.write(chunk)
-            return response.status_code
-        except Exception as e:
-            print(e)
+        response.raise_for_status()
+        with open(self.resource_file_name, "r+b") as out_file:
+            out_file.seek(start_byte)
+            for chunk in response.iter_content(chunk_size=self.chunk_size):
+                if chunk:
+                    out_file.write(chunk)
+        return response.status_code
 
     def download_resource(self):
-        with ThreadPoolExecutor(max_workers=self.number_of_threads) as executor:
-            futures = executor.map(self.__download_part, *zip(*self.part_byte_ranges))
-            # TODO error handling for the threads e.g re-download failed parts
+        max_retries = 3
+        pending = list(self.part_byte_ranges)
+
+        for attempt in range(max_retries):
+            if not pending:
+                break
+            failed = []
+            with ThreadPoolExecutor(max_workers=self.number_of_threads) as executor:
+                future_to_range = {
+                    executor.submit(self.__download_part, start, end): (start, end) for start, end in pending
+                }
+                for future in as_completed(future_to_range):
+                    byte_range = future_to_range[future]
+                    try:
+                        future.result()
+                    except Exception as e:
+                        print(f"ERROR - Part {byte_range} failed (attempt {attempt + 1}): {e}")
+                        failed.append(byte_range)
+            pending = failed
+
+        if pending:
+            raise RuntimeError(f"Parts failed after {max_retries} attempts: {pending}")
 
     def validate_resource_md5(self):
         with open(self.resource_file_name, "rb") as f:
@@ -120,4 +136,3 @@ class HttpDownload:
         else:
             print("no md5 provided, skipping verification")
             print(md5_hash)
-            # raise ValueError("No initial MD5 Hash provided.")
