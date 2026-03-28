@@ -21,6 +21,7 @@ class HttpDownload:
         self.number_of_threads = number_of_threads
         self.chunk_size = chunk_size
         self.resource_md5 = md5_hash
+        self.download_path = download_path
         self.__fetch_resource_location_url()
         self.__fetch_resource_size()
         self.__calc_part_size()
@@ -47,7 +48,10 @@ class HttpDownload:
     def __calc_resource_file_name(self):
         encoded_file_name = self.resource_location_url.split("/")[-1]
         decoded_file_name = urllib.parse.unquote(encoded_file_name)
-        self.resource_file_name = decoded_file_name
+        if self.download_path:
+            self.resource_file_name = os.path.join(self.download_path, decoded_file_name)
+        else:
+            self.resource_file_name = decoded_file_name
 
     def __fetch_resource_size(self):
         response = requests.head(self.resource_location_url)
