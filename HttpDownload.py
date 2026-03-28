@@ -107,16 +107,16 @@ class HttpDownload:
             # TODO error handling for the threads e.g re-download failed parts
 
     def validate_resource_md5(self):
-        md5_hash = hashlib.md5(f.read()).hexdigest()
+        with open(self.resource_file_name, "rb") as f:
+            md5_hash = hashlib.md5(f.read()).hexdigest()
         if self.resource_md5:
-            with open(self.resource_file_name, "rb") as f:
-                if md5_hash == self.resource_md5:
-                    print("md5 match, good download")
-                    return True
-                else:
-                    print("md5 mismatch, bad download")
-                    print(md5_hash)
-                    return False
+            if md5_hash == self.resource_md5:
+                print("md5 match, good download")
+                return True
+            else:
+                print("md5 mismatch, bad download")
+                print(md5_hash)
+                return False
         else:
             print("no md5 provided, skipping verification")
             print(md5_hash)
